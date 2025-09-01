@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [Unreleased]
+## [0.2.0] - 2025-09-01
 
 ### Added
 
@@ -17,18 +17,6 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 - Dynamic dependency checks: only require `gh`/`fzf` when needed
 - UI list is file-first (path • author • date)
-
-## [0.1.0] - 2025-09-01
-
-### Added
-
-- Initial release as a GitHub CLI extension
-- fzf UI to browse unresolved PR review threads
-- Preview with code context and markdown rendering (glow/mdcat optional)
-- Copy to clipboard (Enter/Ctrl-Y) and open in browser (Ctrl-O)
-- Filters: --author, --all-comments, --include-outdated
-- Debug summary via --debug
-- Version flag (-v/--version)
 
 ## [0.1.1] - 2025-09-01
 
@@ -44,3 +32,15 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 ### Removed
 
 - Unused `chmod` and `bat` dependencies
+
+## [0.1.0] - 2025-09-01
+
+### Added
+
+- Initial release as a GitHub CLI extension
+- fzf UI to browse unresolved PR review threads
+- Preview with code context and markdown rendering (glow/mdcat optional)
+- Copy to clipboard (Enter/Ctrl-Y) and open in browser (Ctrl-O)
+- Filters: --author, --all-comments, --include-outdated
+- Debug summary via --debug
+- Version flag (-v/--version)
