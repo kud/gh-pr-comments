@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.3.0] - 2025-09-02
+
+### Added
+
+- In-UI toggles: Alt-A (latest/all), Alt-O (include outdated), Alt-R (cycle unresolved/resolved/all), Alt-S (cycle sort file/date/author)
+- Copy modes: Ctrl-M (Markdown with diff), Ctrl-U (URL only), Ctrl-B (body only)
+- Editor integration: Ctrl-E opens file:line in `$EDITOR`/VS Code/Vim
+- Flags: `--resolved`, `--sort {file|date|author}`, `--no-color`
+- Color handling honors `NO_COLOR` and `CLICOLOR=0`; disables `fzf --ansi` when off
+- jq version check (>= 1.6)
+
+### Changed
+
+- Strict mode: `set -e -u -o pipefail`
+- mdcat uses `--no-color` and markdown rendering respects no-color mode
+- fzf display and matching fixed (`--with-nth=1 --nth=1,2`)
+- Large diff hunks are collapsed (show head/tail 200 lines)
+
+### Notes
+
+- Threads pagination is prepared via structure; comments per-thread remain limited to 100 (future work: paginate comments).
+
 ## [0.2.0] - 2025-09-01
 
 ### Added

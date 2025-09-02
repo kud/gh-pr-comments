@@ -36,6 +36,9 @@ Options:
 - --include-outdated Include outdated comment threads
 - --json Print parsed comments as JSON and exit
 - --list Print UI list output and exit
+- --resolved Show resolved threads instead of unresolved
+- --sort <file|date|author> Sorting mode (default: file)
+- --no-color Disable ANSI colors in UI/preview
 - --debug Write a small debug summary file
 - -R, --repo <owner/repo> Target a specific repository
 - -h, --help Show help
@@ -43,15 +46,74 @@ Options:
 
 Keybindings inside fzf:
 
-- Enter / Ctrl-Y: Copy comment details to clipboard
+- Enter / Ctrl-Y: Copy comment details
+- Ctrl-M: Copy Markdown block (with diff context)
+- Ctrl-U: Copy URL only
+- Ctrl-B: Copy body only
 - Ctrl-O: Open selected comment in browser
+- Ctrl-E: Open file:line in $EDITOR or VS Code
+- Alt-A: Toggle latest/all comments per thread
+- Alt-O: Toggle including outdated threads
+- Alt-R: Cycle thread state (unresolved → resolved → all)
+- Alt-S: Cycle sort (file → date → author)
 
 ## 🧰 Requirements
 
-- gh, jq, fzf
-- awk, sed, base64, wc, tr, nl, cat, cut, rev
+- gh, jq (>= 1.6), fzf
+- awk, sed, base64, wc, tr, nl, cat, cut, rev, perl
 - Optional: glow or mdcat for nicer markdown rendering
   - Clipboard: pbcopy (macOS) or xclip/xsel (Linux) for copy action
+
+### Install requirements quickly
+
+- macOS (Homebrew):
+
+```
+brew install gh jq fzf glow mdcat
+```
+
+Enable fzf key bindings (history search, Alt-C, etc.):
+
+```
+$(brew --prefix)/opt/fzf/install
+```
+Choose to enable key bindings and shell completion when prompted.
+
+- Ubuntu/Debian:
+
+```
+sudo apt update
+sudo apt install -y gh jq fzf xclip
+# optional renderers: sudo apt install -y glow mdcat
+```
+
+- Fedora:
+
+```
+sudo dnf install -y gh jq fzf xclip
+```
+
+- Arch Linux:
+
+```
+sudo pacman -S --needed github-cli jq fzf xclip
+```
+
+Notes:
+
+- On Linux, ensure `$HOME/.local/bin` is in your `PATH` so tools are discoverable.
+- If your distro doesn’t package `gh`, install it via GitHub’s instructions: https://github.com/cli/cli#installation
+
+WSL clipboard tips:
+
+- This tool supports `pbcopy`, `xclip`, or `xsel` for copying.
+- On WSL without X11, a quick shim is to add this to `~/.zshrc`:
+
+```
+pbcopy() { clip.exe; }
+```
+
+- Alternatively, install `xclip` and run an X server, or install `win32yank` and symlink it to `pbcopy`.
 
 ## 🧪 Testing locally
 
@@ -72,6 +134,15 @@ The above prints the parsed comments as JSON (use `--list` to print the UI list 
 - Filter by file: `-f src/app.py` can be repeated. Values are treated as regex by jq’s `test(...)`, so you can use patterns like `-f '^src/.*\.py$'`.
 - Filter by date: `--since 2024-01-01`, `--until 2024-01-31` (inclusive, UTC based on `createdAt`).
 - Combine filters: `-f src -a @alice --since 2024-01-01 --include-outdated`.
+
+Sorting and state:
+
+- Sort: `--sort date` to sort by newest first; `--sort author` groups by author.
+- Resolved: `--resolved` to browse resolved threads as a follow-up queue.
+
+Color:
+
+- Disable colors with `--no-color` or `NO_COLOR=1`.
 
 ## 📝 Notes
 
@@ -106,3 +177,16 @@ Users can check the installed version with:
 ```
 gh review-pull-request --version
 ```
+
+
+## 🛠️ Troubleshooting
+
+- GitHub auth error: If the API call fails, run `gh auth status` and `gh auth login`.
+- No comments found: Try `--all`, `--include-outdated`, or `--resolved`. Also check filters like `--author`, `--file`, `--since/--until`.
+- Clipboard not working: Install `pbcopy` (macOS), `xclip`/`xsel` (Linux). On WSL, add `pbcopy() { clip.exe; }` to your shell or install `win32yank`.
+- Colors look noisy: Use `--no-color` or set `NO_COLOR=1`. Piping output? Prefer `--no-color`.
+- fzf not launching: Ensure `fzf` is installed and your `TERM` is not `dumb` (use a real terminal). On macOS, run `$(brew --prefix)/opt/fzf/install` to enable key bindings.
+- jq version: Requires jq >= 1.6 (for `fromdateiso8601`). Check with `jq --version` and upgrade if needed.
+- Markdown rendering: If `glow`/`mdcat` are missing, plain text is shown. Install one for nicer previews.
+- Open in editor (Ctrl-E) does nothing: Set the `EDITOR` env var, or ensure `code` is available for VS Code. Falls back to `vim`.
+- Large PRs: Extremely long diff hunks are collapsed for performance in previews. Currently up to 100 comments per thread are fetched.
