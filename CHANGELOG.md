@@ -4,7 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [0.3.0] - 2025-09-02
+## [0.4.0] - 2025-09-02
+
+### Breaking
+
+- Command renamed to `gh pr-comments` (was `gh review-pull-request`).
+
+### Added
 
 ### Added
 
@@ -19,7 +25,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 - Strict mode: `set -e -u -o pipefail`
 - mdcat uses `--no-color` and markdown rendering respects no-color mode
-- fzf display and matching fixed (`--with-nth=1 --nth=1,2`)
+- fzf display and matching fixed; header styled and help toggle added
 - Large diff hunks are collapsed (show head/tail 200 lines)
 
 ### Notes

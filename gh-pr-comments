@@ -1,10 +1,10 @@
 #!/bin/zsh
 # shellcheck shell=bash
-# gh review-pull-request — Browse PR review discussions with fzf
+# gh pr-comments — Browse PR review comments with fzf
 #
 # Usage:
-#   gh review-pull-request                 # infer repo and current PR
-#   gh review-pull-request <number>        # browse specific PR number
+#   gh pr-comments                 # infer repo and current PR
+#   gh pr-comments <number>        # browse specific PR number
 #
 # Options:
 #   -a, --author <login>        Filter by author (can be repeated)
@@ -57,11 +57,11 @@ XSEL_BIN=$(command -v xsel 2>/dev/null || true)
 
 usage() {
   cat <<'USAGE'
-gh review-pull-request — Browse PR review discussions with fzf
+gh pr-comments — Browse PR review comments with fzf
 
 Usage:
-  gh review-pull-request                 # infer repo and current PR
-  gh review-pull-request <number>        # browse specific PR number
+  gh pr-comments                 # infer repo and current PR
+  gh pr-comments <number>        # browse specific PR number
 
 Options:
   -a, --author <login>        Filter by author (can be repeated)
@@ -102,7 +102,7 @@ get_version_from_git() {
 print_version_and_exit() {
   local v
   v=$(get_version_from_version_file || get_version_from_git || printf "%s" "$DEFAULT_VERSION")
-  printf "gh review-pull-request v%s\n" "$v"
+  printf "gh pr-comments v%s\n" "$v"
   exit 0
 }
 
@@ -768,7 +768,7 @@ GQL
 )
 
 # Create temp workspace early and ensure cleanup
-TMPDIR="$(mktemp -d -t gh-review-pull-request.XXXXXX)"
+TMPDIR="$(mktemp -d -t gh-pr-comments.XXXXXX)"
 cleanup() { command rm -rf "$TMPDIR" >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
 
@@ -780,7 +780,7 @@ if [ -n "${GH_REVIEW_PR_JSON:-}" ]; then
     JSON="$GH_REVIEW_PR_JSON"
   fi
 else
-  GH_ERR_FILE="$(mktemp -t gh-review-pr-gherr.XXXXXX)"
+  GH_ERR_FILE="$(mktemp -t gh-pr-comments-gherr.XXXXXX)"
   JSON="$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f name="$REPO" -F number="$PR_NUMBER" 2>"$GH_ERR_FILE")" || {
     err "GitHub API failed:"
     if [ -s "$GH_ERR_FILE" ]; then

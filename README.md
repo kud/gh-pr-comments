@@ -1,6 +1,6 @@
-# ✨ gh review-pull-request
+# ✨ gh pr-comments
 
-Browse GitHub PR review discussions with fzf.
+Browse GitHub PR review comments with fzf.
 
 This is a GitHub CLI extension that lets you filter unresolved review threads for a pull request, preview comment context, copy a comment to your clipboard, or open it in the browser.
 
@@ -15,15 +15,15 @@ gh extension install .
 Or directly from GitHub:
 
 ```
-gh extension install kud/gh-review-pull-request
+gh extension install kud/gh-pr-comments
 ```
 
 ## ▶️ Usage
 
 ```
-gh review-pull-request                 # infer repo and current PR
-gh review-pull-request <number>        # browse specific PR number
-gh review-pull-request -R owner/repo   # target a specific repository
+gh pr-comments                 # infer repo and current PR
+gh pr-comments <number>        # browse specific PR number
+gh pr-comments -R owner/repo   # target a specific repository
 ```
 
 Options:
@@ -123,7 +123,7 @@ Example with your own GraphQL response file:
 
 ```
 GH_REVIEW_PR_JSON=/path/to/your_graphql.json \
-  ./gh-review-pull-request 123 -R owner/repo --json
+  ./gh-pr-comments 123 -R owner/repo --json
 ```
 
 The above prints the parsed comments as JSON (use `--list` to print the UI list instead).
@@ -175,7 +175,7 @@ version=$(cat VERSION) && git tag "v$version" && git push origin "v$version"
 Users can check the installed version with:
 
 ```
-gh review-pull-request --version
+gh pr-comments --version
 ```
 
 
