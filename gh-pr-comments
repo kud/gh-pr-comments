@@ -1,0 +1,905 @@
+#!/bin/zsh
+# shellcheck shell=bash
+# gh pr-comments — Browse PR review comments with fzf
+#
+# Usage:
+#   gh pr-comments                 # infer repo and current PR
+#   gh pr-comments <number>        # browse specific PR number
+#
+# Options:
+#   -a, --author <login>        Filter by author (can be repeated)
+#   -f, --file <path/regex>     Filter by file path (repeatable)
+#       --since <YYYY-MM-DD>    Filter comments created on/after date
+#       --until <YYYY-MM-DD>    Filter comments created on/before date
+#       --all, --all-comments   Show all comments in threads (not just latest)
+#       --include-outdated      Include outdated comment threads
+#       --json                  Print parsed comments as JSON and exit
+#       --list                  Print UI list output and exit
+#       --resolved              Show resolved threads instead of unresolved
+#       --sort <mode>           Sort by: file|date|author
+#       --no-color              Disable ANSI colors in UI/preview
+#       --debug                 Write a small debug summary file
+#   -R, --repo <owner/repo>     Target a specific repository
+#   -v, --version               Show version and exit
+#   -h, --help                  Show this help and exit
+
+set -e
+set -u
+set -o pipefail
+
+err() { printf "%s\n" "$*" >&2; }
+need() { command -v "$1" >/dev/null 2>&1 || { err "Missing dependency: $1"; return 1; } }
+
+# Ensure a sane PATH when executed as a gh extension (minimal env)
+export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/bin"
+
+# (moved dependency checks below after option parsing)
+
+# Optional markdown renderer and syntax highlighter
+GLOW_BIN=$(command -v glow 2>/dev/null || true)
+MDCAT_BIN=$(command -v mdcat 2>/dev/null || true)
+
+# Resolve executables we will call explicitly later
+FZF_BIN=$(command -v fzf 2>/dev/null || true)
+AWK_BIN=$(command -v awk)
+SED_BIN=$(command -v sed)
+BASE64_BIN=$(command -v base64)
+WC_BIN=$(command -v wc)
+TR_BIN=$(command -v tr)
+NL_BIN=$(command -v nl)
+CAT_BIN=$(command -v cat)
+CUT_BIN=$(command -v cut)
+REV_BIN=$(command -v rev)
+OPEN_BIN=$(command -v open 2>/dev/null || true)
+PBCOPY_BIN=$(command -v pbcopy 2>/dev/null || true)
+XCLIP_BIN=$(command -v xclip 2>/dev/null || true)
+XSEL_BIN=$(command -v xsel 2>/dev/null || true)
+
+usage() {
+  cat <<'USAGE'
+gh pr-comments — Browse PR review comments with fzf
+
+Usage:
+  gh pr-comments                 # infer repo and current PR
+  gh pr-comments <number>        # browse specific PR number
+
+Options:
+  -a, --author <login>        Filter by author (can be repeated)
+  -f, --file <path/regex>     Filter by file path (repeatable)
+      --since <YYYY-MM-DD>    Filter comments created on/after date
+      --until <YYYY-MM-DD>    Filter comments created on/before date
+      --all, --all-comments   Show all comments in threads (not just latest)
+      --include-outdated      Include outdated comment threads
+      --json                  Print parsed comments as JSON and exit
+      --list                  Print UI list output and exit
+      --resolved              Show resolved threads instead of unresolved
+      --sort <mode>           Sort by: file|date|author (default: file)
+      --no-color              Disable ANSI colors in UI/preview
+      --debug                 Write a small debug summary file
+  -R, --repo <owner/repo>     Target a specific repository
+  -h, --help                  Show this help and exit
+  -v, --version               Show version and exit
+USAGE
+}
+
+# Version helpers
+DEFAULT_VERSION="0.1.0"
+get_version_from_version_file() {
+  # Read version from a plain VERSION file if present
+  if [ -f "$(dirname "$0")/VERSION" ]; then
+    ver=$(sed -n '1p' "$(dirname "$0")/VERSION" | tr -d '\n' | tr -d '\r')
+    [ -n "$ver" ] && printf "%s" "$ver" && return 0
+  fi
+  return 1
+}
+get_version_from_git() {
+  if command -v git >/dev/null 2>&1; then
+    ver=$(git -C "$(dirname "$0")" describe --tags --abbrev=0 2>/dev/null || true)
+    [ -n "$ver" ] && printf "%s" "${ver#v}" && return 0
+  fi
+  return 1
+}
+print_version_and_exit() {
+  local v
+  v=$(get_version_from_version_file || get_version_from_git || printf "%s" "$DEFAULT_VERSION")
+  printf "gh pr-comments v%s\n" "$v"
+  exit 0
+}
+
+# Utility functions
+decode_base64() {
+  printf '%s' "$1" | "${BASE64_BIN}" --decode 2>/dev/null || printf '%s' "$1" | "${BASE64_BIN}" -D 2>/dev/null
+}
+
+get_field() {
+  local file="$1" field="$2"
+  "${SED_BIN}" -n "s/^${field}: //p" "$file"
+}
+
+copy_to_clipboard() {
+  if [ -n "${PBCOPY_BIN:-}" ]; then
+    "${PBCOPY_BIN}" 2>/dev/null || return 1
+  elif [ -n "${XCLIP_BIN:-}" ]; then
+    "${XCLIP_BIN}" -selection clipboard 2>/dev/null || return 1
+  elif [ -n "${XSEL_BIN:-}" ]; then
+    "${XSEL_BIN}" --clipboard --input 2>/dev/null || return 1
+  else
+    return 1
+  fi
+}
+
+# Simple state helpers stored in tmpdir/state
+state_get() {
+  local file="$1" key="$2"
+  [ -f "$file" ] || return 1
+  ${SED_BIN} -n "s/^${key}=//p" "$file" | ${AWK_BIN} 'NR==1{print; exit}'
+}
+
+state_set() {
+  local file="$1" key="$2" value="$3"
+  if [ ! -f "$file" ]; then : > "$file"; fi
+  if grep -q "^${key}=" "$file" 2>/dev/null; then
+    # try BSD sed in-place, fallback to portable
+    ${SED_BIN} -i '' -e "s|^${key}=.*|${key}=${value}|" "$file" 2>/dev/null || {
+      tmpf="${file}.tmp.$$"; ${SED_BIN} -e "s|^${key}=.*|${key}=${value}|" "$file" > "$tmpf" && mv "$tmpf" "$file"
+    }
+  else
+    printf "%s\n" "${key}=${value}" >> "$file"
+  fi
+}
+
+sub_build() {
+  # Args: <tmpdir>
+  local tmpdir="$1" state="$1/state" json="$1/data.json" tsv="$1/comments.tsv" list="$1/list"
+  local authors files since until show_mode include_outdated state_filter sort color
+  authors="$(state_get "$state" AUTHORS)" || authors=""
+  files="$(state_get "$state" FILES)" || files=""
+  since="$(state_get "$state" SINCE)" || since=""
+  until="$(state_get "$state" UNTIL)" || until=""
+  show_mode="$(state_get "$state" SHOW_MODE)" || show_mode="latest"
+  include_outdated="$(state_get "$state" INCLUDE_OUTDATED)" || include_outdated=0
+  state_filter="$(state_get "$state" STATE_FILTER)" || state_filter="unresolved"
+  sort="$(state_get "$state" SORT)" || sort="file"
+  color="$(state_get "$state" COLOR)" 2>/dev/null || color=1
+
+  : > "$tsv"
+  : > "$list"
+
+  printf '%s' "$(${CAT_BIN} "$json")" | jq -r \
+    --arg authors "$authors" \
+    --arg files "$files" \
+    --arg since "$since" \
+    --arg until "$until" \
+    --arg show_mode "$show_mode" \
+    --arg state_filter "$state_filter" \
+    --arg sort "$sort" \
+    --argjson include_outdated "$include_outdated" '
+    ($authors | split(",") | map(select(length>0))) as $A |
+    ($files | split(",") | map(select(length>0))) as $F |
+    .data.repository.pullRequest.reviewThreads.nodes // [] |
+    (if $state_filter == "resolved" then map(select(.isResolved == true))
+     elif $state_filter == "all" then . else map(select(.isResolved == false)) end) |
+    (if $include_outdated == 1 then . else map(select(.line != null)) end) |
+    map(
+      . as $t |
+      (
+        ($t.comments.nodes // [])
+        | (if ($A|length) > 0 then map(select(.author.login as $l | ($A | index($l)))) else . end)
+        | (if $show_mode == "latest" then (sort_by(.createdAt) | (last // empty) | (if . then [.] else [] end)) else . end)
+        | map(. + { thread_path: $t.path, thread_line: ($t.line // $t.originalLine), thread_resolved: $t.isResolved })
+      )
+    ) |
+    add // [] |
+    ( if ($F|length) > 0 then map(select(any($F[]; ((.thread_path // .path // "") | test(.)) ))) else . end ) |
+    ( if ($since|length) > 0 then map(select((.createdAt|fromdateiso8601) >= ($since|fromdateiso8601))) else . end ) |
+    ( if ($until|length) > 0 then map(select((.createdAt|fromdateiso8601) <= ($until|fromdateiso8601))) else . end ) |
+    ( if $sort == "date" then sort_by(-(.createdAt|fromdateiso8601), (.thread_path // .path // ""))
+      elif $sort == "author" then sort_by((.author.login // ""), -(.createdAt|fromdateiso8601))
+      else sort_by((.thread_path // .path // ""), -(.createdAt|fromdateiso8601)) end ) |
+    .[] |
+    [
+      (.author.login // "unknown"),
+      (.thread_path // .path // "unknown"),
+      (.thread_line // null),
+      (.url // ""),
+      (.createdAt // "" | split("T")[0]),
+      ((.body // .bodyText // "") | gsub("[\n\r\t]"; " ") | gsub("  +"; " ") | .[0:80]),
+      ((.diffHunk // "") | @base64),
+      ((.body // .bodyText // "") | @base64)
+    ] | @tsv
+  ' > "$tsv"
+
+  # rebuild per-comment files and visible list
+  command rm -f "$tmpdir"/[0-9]* 2>/dev/null || true
+  local idx=0
+  if [ -s "$tsv" ]; then
+    while IFS=$'\t' read -r author path line url date preview diff_b64 body_b64; do
+      {
+        printf "Author: %s\n" "$author"
+        printf "Path: %s\n" "${path}${line:+:$line}"
+        printf "Date: %s\n" "$date"
+        printf "URL: %s\n" "$url"
+        printf "Preview: %s\n" "$preview"
+        printf "Diff: %s\n" "$diff_b64"
+        printf "Body: %s\n" "$body_b64"
+      } > "$tmpdir/$idx"
+
+      display_author="$author"
+      case "$author" in *copilot*) display_author="copilot";; esac
+      full_path="${path}${line:+:$line}"
+      if [ ${#full_path} -gt 55 ]; then
+        truncated_path="$(echo "$full_path" | "$CUT_BIN" -c1-30)…$(echo "$full_path" | "$REV_BIN" | "$CUT_BIN" -c1-20 | "$REV_BIN")"
+      else
+        truncated_path="$full_path"
+      fi
+      max_path_length=56
+      if [ ${#truncated_path} -gt $max_path_length ]; then
+        truncated_path="$(echo "$truncated_path" | "$CUT_BIN" -c1-$((max_path_length-1)))…"
+      fi
+
+      if [ "$color" -eq 1 ]; then
+        printf '%s\t%s\n' \
+          "$(printf '%2d \033[33m%-56s\033[0m \033[36m%-10s\033[0m \033[90m%s\033[0m' "$((idx+1))" "$truncated_path" "$display_author" "$date")" \
+          "$full_path" >> "$list"
+      else
+        printf '%s\t%s\n' \
+          "$(printf '%2d %-56s %-10s %s' "$((idx+1))" "$truncated_path" "$display_author" "$date")" \
+          "$full_path" >> "$list"
+      fi
+      idx=$((idx+1))
+    done < "$tsv"
+  fi
+}
+
+sub_toggle() {
+  # Args: <tmpdir> <what>
+  local tmpdir="$1" what="$2" state="$1/state"
+  local cur
+  case "$what" in
+    show)
+      cur="$(state_get "$state" SHOW_MODE)"; [ -z "$cur" ] && cur=latest
+      if [ "$cur" = "latest" ]; then state_set "$state" SHOW_MODE all; else state_set "$state" SHOW_MODE latest; fi ;;
+    outdated)
+      cur="$(state_get "$state" INCLUDE_OUTDATED)"; [ -z "$cur" ] && cur=0
+      if [ "$cur" -eq 1 ]; then state_set "$state" INCLUDE_OUTDATED 0; else state_set "$state" INCLUDE_OUTDATED 1; fi ;;
+    state)
+      cur="$(state_get "$state" STATE_FILTER)"; [ -z "$cur" ] && cur=unresolved
+      case "$cur" in
+        unresolved) state_set "$state" STATE_FILTER resolved ;;
+        resolved)   state_set "$state" STATE_FILTER all ;;
+        *)          state_set "$state" STATE_FILTER unresolved ;;
+      esac ;;
+    sort)
+      cur="$(state_get "$state" SORT)"; [ -z "$cur" ] && cur=file
+      case "$cur" in
+        file)   state_set "$state" SORT date ;;
+        date)   state_set "$state" SORT author ;;
+        *)      state_set "$state" SORT file ;;
+      esac ;;
+    help)
+      cur="$(state_get "$state" SHOW_HELP)"; [ -z "$cur" ] && cur=0
+      if [ "$cur" -eq 1 ]; then state_set "$state" SHOW_HELP 0; else state_set "$state" SHOW_HELP 1; fi ;;
+  esac
+  $0 __build "$tmpdir" >/dev/null 2>&1 || true
+}
+
+# Internal subcommands (invoked by fzf)
+sub_preview() {
+  # Args: <fzf_line> <tmpdir> <owner/repo> <pr_number>
+  local fzf_line="$1" tmpdir="$2" repo="$3" pr="$4"
+  local n f
+  n=$(printf "%s" "$fzf_line" | "${AWK_BIN}" '{print $1-1; exit}')
+  f="$tmpdir/$n"
+  if [ ! -f "$f" ]; then echo "Comment not found"; return 1; fi
+
+  # One-shot toast message if present
+  if [ -f "$tmpdir/toast" ]; then
+    printf "\033[1;32m%s\033[0m\n\n" "$("$CAT_BIN" "$tmpdir/toast" 2>/dev/null)"
+    command rm -f "$tmpdir/toast" >/dev/null 2>&1 || true
+  fi
+
+  local author path date url diff_b64 body_b64 decoded_diff decoded_body
+  author=$(get_field "$f" Author)
+  path=$(get_field "$f" Path)
+  date=$(get_field "$f" Date)
+  url=$(get_field "$f" URL)
+  diff_b64=$(get_field "$f" Diff)
+  body_b64=$(get_field "$f" Body)
+
+  local color=1
+  if [ -f "$tmpdir/state" ]; then
+    color="$(state_get "$tmpdir/state" COLOR 2>/dev/null || echo 1)"
+  fi
+
+  # Help mode: show a compact help sheet in the preview
+  local show_help=0
+  if [ -f "$tmpdir/state" ]; then
+    show_help="$(state_get "$tmpdir/state" SHOW_HELP 2>/dev/null || echo 0)"
+  fi
+  if [ "$show_help" -eq 1 ]; then
+    if [ "$color" -eq 1 ]; then
+      printf "\033[1;95mHelp — Hotkeys\033[0m\n\n"
+      printf "\033[1mCopy\033[0m  Enter/Ctrl-Y: full  •  Ctrl-M: Markdown  •  Ctrl-U: URL  •  Ctrl-B: body\n"
+      printf "\033[1mOpen\033[0m  Ctrl-O: browser  •  Ctrl-E: editor (file:line)\n"
+      printf "\033[1mToggles\033[0m  Alt-A: latest/all  •  Alt-O: outdated  •  Alt-R: state  •  Alt-S: sort\n"
+      printf "\033[1mHelp\033[0m  ?: toggle this help\n\n"
+      printf "Tips: Hold Shift to select text without scrolling. Use -f/--file and --since/--until to pre-filter.\n"
+    else
+      printf "Help — Hotkeys\n\n"
+      printf "Copy  Enter/Ctrl-Y: full  •  Ctrl-M: Markdown  •  Ctrl-U: URL  •  Ctrl-B: body\n"
+      printf "Open  Ctrl-O: browser  •  Ctrl-E: editor (file:line)\n"
+      printf "Toggles  Alt-A: latest/all  •  Alt-O: outdated  •  Alt-R: state  •  Alt-S: sort\n"
+      printf "Help  ?: toggle this help\n\n"
+      printf "Tips: Hold Shift to select text without scrolling. Use -f/--file and --since/--until to pre-filter.\n"
+    fi
+    return 0
+  fi
+  if [ "$color" -eq 1 ]; then
+    printf "\033[1;95mRepo:\033[0m %s  \033[1;95mPR:\033[0m #%s\n" "$repo" "$pr"
+    printf "\033[1;36mAuthor:\033[0m @%s\n" "$author"
+    printf "\033[1;33mFile:\033[0m %s\n" "$path"
+    printf "\033[1;90mDate:\033[0m %s\n" "$date"
+    printf "\033[1;90mURL:\033[0m %s\n\n" "$url"
+  else
+    printf "Repo: %s  PR: #%s\n" "$repo" "$pr"
+    printf "Author: @%s\n" "$author"
+    printf "File: %s\n" "$path"
+    printf "Date: %s\n" "$date"
+    printf "URL: %s\n\n" "$url"
+  fi
+
+  if [ -n "$diff_b64" ]; then
+    decoded_diff=$(decode_base64 "$diff_b64")
+    total_lines=$(printf "%s\n" "$decoded_diff" | "$WC_BIN" -l | "$TR_BIN" -d ' ')
+    if [ "$color" -eq 1 ]; then
+      echo "\033[1;35mCode Context:\033[0m"; echo
+      display_diff() {
+        while IFS= read -r line; do
+          case "$line" in
+            -*)  printf "\033[31m%s\033[0m\n" "$line" ;;
+            +*)  printf "\033[32m%s\033[0m\n" "$line" ;;
+            @@*) printf "\033[94m%s\033[0m\n" "$line" ;;
+            *)   printf "\033[37m%s\033[0m\n" "$line" ;;
+          esac
+        done
+      }
+      if [ "$total_lines" -gt 400 ]; then
+        printf "%s\n" "$decoded_diff" | head -n 200 | display_diff
+        printf "... (%d lines omitted) ...\n" "$((total_lines-400))"
+        printf "%s\n" "$decoded_diff" | tail -n 200 | display_diff
+      else
+        printf "%s\n" "$decoded_diff" | display_diff
+      fi
+      echo
+    else
+      echo "Code Context:"; echo
+      if [ "$total_lines" -gt 400 ]; then
+        printf "%s\n" "$decoded_diff" | head -n 200
+        printf "... (%d lines omitted) ...\n" "$((total_lines-400))"
+        printf "%s\n" "$decoded_diff" | tail -n 200
+      else
+        printf "%s\n" "$decoded_diff"
+      fi
+      echo
+    fi
+  fi
+
+  echo
+  if [ "$color" -eq 1 ]; then
+    echo "\033[1;32mComment:\033[0m"
+  else
+    echo "Comment:"
+  fi
+  decoded_body=$(decode_base64 "$body_b64")
+  if [ -n "$GLOW_BIN" ]; then
+    if [ "$color" -eq 1 ]; then
+      printf "%s" "$decoded_body" | "$GLOW_BIN" --style=dark --width=80 2>/dev/null || printf "%s" "$decoded_body"
+    else
+      printf "%s" "$decoded_body" | "$GLOW_BIN" --width=80 --no-color 2>/dev/null || printf "%s" "$decoded_body"
+    fi
+  elif [ -n "$MDCAT_BIN" ]; then
+    if [ "$color" -eq 1 ]; then
+      printf "%s" "$decoded_body" | "$MDCAT_BIN" 2>/dev/null || printf "%s" "$decoded_body"
+    else
+      printf "%s" "$decoded_body" | "$MDCAT_BIN" --no-color 2>/dev/null || printf "%s" "$decoded_body"
+    fi
+  else
+    # Minimal markdown styling via sed (only when color enabled)
+    if [ "$color" -eq 1 ]; then
+      printf "%s" "$decoded_body" | "$SED_BIN" '
+      # Handle code blocks first
+      :code_start
+      /^```/ {
+        s/.*/\033[2;37m&\033[0m/
+        n
+        :code_loop
+        /^```/b code_end
+        s/.*/\033[48;5;236m\033[97m&\033[0m/
+        n
+        b code_loop
+        :code_end
+        s/.*/\033[2;37m&\033[0m/
+      }
+
+      # Headers
+      s/^# \(.*\)/\033[1;4m\1\033[0m/g
+      s/^## \(.*\)/\033[1m\1\033[0m/g
+      s/^### \(.*\)/\033[1;90m\1\033[0m/g
+
+      # Inline code (not in code blocks)
+      s/`\([^`]*\)`/\033[48;5;236m\033[97m \1 \033[0m/g
+
+      # Bold and italic
+      s/\*\*\([^*]*\)\*\*/\033[1m\1\033[0m/g
+      s/\*\([^*]*\)\*/\033[3m\1\033[0m/g
+
+      # Bullet points
+      s/^- \(.*\)/  \033[36m•\033[0m \1/g
+      s/^  - \(.*\)/    \033[36m◦\033[0m \1/g
+
+      # Numbered lists
+      s/^[0-9]*\. \(.*\)/  \033[33m▸\033[0m \1/g
+    '
+    else
+      printf "%s" "$decoded_body"
+    fi
+  fi
+}
+
+sub_copy() {
+  # Args: <fzf_line> <tmpdir> [mode] [msgfile]
+  local fzf_line="$1" tmpdir="$2" mode="${3-full}" msgfile="${4-}"
+  local n f
+  n=$(printf "%s" "$fzf_line" | "${AWK_BIN}" '{print $1-1; exit}')
+  f="$tmpdir/$n"
+  [ -f "$f" ] || return 0
+
+  local author path date url body_b64 decoded_body
+  author=$(get_field "$f" Author)
+  path=$(get_field "$f" Path)
+  date=$(get_field "$f" Date)
+  url=$(get_field "$f" URL)
+  body_b64=$(get_field "$f" Body)
+  decoded_body=$(decode_base64 "$body_b64")
+
+  local content
+  case "$mode" in
+    url)
+      content="$url" ;;
+    body)
+      content="$decoded_body" ;;
+    md)
+      local diff_b64 decoded_diff
+      diff_b64=$(get_field "$f" Diff)
+      if [ -n "$diff_b64" ]; then
+        decoded_diff=$(decode_base64 "$diff_b64")
+        content=$(printf "> %s\n\n[%s](%s) — @%s on %s\n\n\`\`\`diff\n%s\n\`\`\`\n\n%s\n" "$path" "$path" "$url" "$author" "$date" "$decoded_diff" "$decoded_body")
+      else
+        content=$(printf "> %s\n\n[%s](%s) — @%s on %s\n\n%s\n" "$path" "$path" "$url" "$author" "$date" "$decoded_body")
+      fi ;;
+    *)
+      content=$(printf "Review Comment\nAuthor: @%s\nFile: %s\nDate: %s\nURL: %s\n\n%s\n" "$author" "$path" "$date" "$url" "$decoded_body") ;;
+  esac
+
+  if printf "%s" "$content" | copy_to_clipboard; then
+    copied_ok=1
+  else
+    copied_ok=0
+  fi
+
+  # Optional friendly message to be printed by the parent after fzf exits
+  if [ -n "$msgfile" ]; then
+    {
+      case "$mode" in
+        url) printf "Copied URL to clipboard\n%s\n" "$url" ;;
+        body) printf "Copied comment body\n" ;;
+        md) printf "Copied Markdown block\n%s\n" "$url" ;;
+        *) printf "Copied the discussion:\n%s\n" "$url" ;;
+      esac
+    } > "$msgfile" 2>/dev/null || true
+  fi
+
+  # Prepare in-interface toast for preview (once)
+  if [ "$copied_ok" -eq 1 ]; then
+    if printf "%s" "$url" | grep -q '#'; then
+      local anchor="${url##*#}"
+      anchor="${anchor#discussion_r}"
+      case "$mode" in
+        url) printf "✔ Copied URL %s" "$anchor" > "$tmpdir/toast" 2>/dev/null || true ;;
+        body) printf "✔ Copied body %s" "$anchor" > "$tmpdir/toast" 2>/dev/null || true ;;
+        md) printf "✔ Copied Markdown %s" "$anchor" > "$tmpdir/toast" 2>/dev/null || true ;;
+        *) printf "✔ Copied discussion %s" "$anchor" > "$tmpdir/toast" 2>/dev/null || true ;;
+      esac
+    else
+      case "$mode" in
+        url) printf "✔ Copied URL" > "$tmpdir/toast" 2>/dev/null || true ;;
+        body) printf "✔ Copied body" > "$tmpdir/toast" 2>/dev/null || true ;;
+        md) printf "✔ Copied Markdown" > "$tmpdir/toast" 2>/dev/null || true ;;
+        *) printf "✔ Copied discussion" > "$tmpdir/toast" 2>/dev/null || true ;;
+      esac
+    fi
+  else
+    printf "⚠ Could not copy to clipboard (install pbcopy, xclip, or xsel)" > "$tmpdir/toast" 2>/dev/null || true
+  fi
+}
+
+sub_open() {
+  # Args: <fzf_line> <tmpdir>
+  local fzf_line="$1" tmpdir="$2"
+  local n f url
+  n=$(printf "%s" "$fzf_line" | "${AWK_BIN}" '{print $1-1; exit}')
+  f="$tmpdir/$n"
+  [ -f "$f" ] || return 0
+  url=$(get_field "$f" URL)
+  [ -n "$url" ] || return 0
+  if [ -n "$OPEN_BIN" ]; then
+    "$OPEN_BIN" "$url" 2>/dev/null || command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" 2>/dev/null || true
+  else
+    command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" 2>/dev/null || true
+  fi
+}
+
+sub_edit() {
+  # Args: <fzf_line> <tmpdir>
+  local fzf_line="$1" tmpdir="$2"
+  local n f path file line root
+  n=$(printf "%s" "$fzf_line" | "${AWK_BIN}" '{print $1-1; exit}')
+  f="$tmpdir/$n"
+  [ -f "$f" ] || return 0
+  path=$(get_field "$f" Path)
+  file="${path%%:*}"; line="${path##*:}"
+  [ "$file" = "$line" ] && line=""
+  root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  if [ -f "$root/$file" ]; then
+    if [ -n "${EDITOR:-}" ]; then
+      if [ -n "$line" ]; then (cd "$root" && "$EDITOR" +"$line" -- "$file") >/dev/null 2>&1 || true
+      else (cd "$root" && "$EDITOR" -- "$file") >/dev/null 2>&1 || true
+      fi
+    elif command -v code >/dev/null 2>&1; then
+      if [ -n "$line" ]; then (cd "$root" && code -g "$file":"$line") >/dev/null 2>&1 || true
+      else (cd "$root" && code -g "$file") >/dev/null 2>&1 || true
+      fi
+    else
+      if [ -n "$line" ]; then (cd "$root" && vim +"$line" -- "$file") >/dev/null 2>&1 || true
+      else (cd "$root" && vim -- "$file") >/dev/null 2>&1 || true
+      fi
+    fi
+  fi
+}
+
+# If invoked in internal mode, dispatch and exit early
+case "${1-}" in
+  __preview)
+    shift; sub_preview "$@"; exit $? ;;
+  __copy)
+    shift; sub_copy "$@"; exit $? ;;
+  __open)
+    shift; sub_open "$@"; exit $? ;;
+  __build)
+    shift; sub_build "$@"; exit $? ;;
+  __toggle)
+    shift; sub_toggle "$@"; exit $? ;;
+  __edit)
+    shift; sub_edit "$@"; exit $? ;;
+esac
+
+# Parse args: optional PR number (positional) and author filter(s)
+PR_NUMBER=""
+AUTHORS=""
+# Optional repo override
+REPO_ARG=""
+# Display mode: latest non-outdated comment per unresolved thread by default
+SHOW_MODE="latest"       # values: latest|all
+INCLUDE_OUTDATED=0        # 0: exclude outdated comments, 1: include
+DEBUG=0                   # 1: print debug info about threads
+OUTPUT_JSON=0             # 1: print parsed comments as JSON and exit
+OUTPUT_LIST=0             # 1: print UI list and exit
+NO_COLOR_FLAG=0           # 1: disable ANSI colors
+STATE_FILTER="unresolved" # unresolved|resolved|all (CLI exposes --resolved)
+SORT_MODE="file"          # file|date|author
+FILES=""                  # comma-separated file path/regex filters
+SINCE=""                  # ISO date YYYY-MM-DD
+UNTIL=""                  # ISO date YYYY-MM-DD
+
+normalize_author() {
+  local a="${1:-}"
+  a="${a#@}"
+  case "$a" in
+    copilot) printf "%s" "copilot-pull-request-reviewer" ;;
+    *)       printf "%s" "$a" ;;
+  esac
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -a|--author)
+      [ -n "${2:-}" ] || { err "--author requires a value"; exit 1; }
+      norm="$(normalize_author "$2")"
+      if [ -z "$AUTHORS" ]; then AUTHORS="$norm"; else AUTHORS="$AUTHORS,$norm"; fi
+      shift 2
+      ;;
+    -f|--file)
+      [ -n "${2:-}" ] || { err "--file requires a value"; exit 1; }
+      if [ -z "$FILES" ]; then FILES="$2"; else FILES="$FILES,$2"; fi
+      shift 2
+      ;;
+    --since)
+      [ -n "${2:-}" ] || { err "--since requires YYYY-MM-DD"; exit 1; }
+      SINCE="$2"; shift 2 ;;
+    --until)
+      [ -n "${2:-}" ] || { err "--until requires YYYY-MM-DD"; exit 1; }
+      UNTIL="$2"; shift 2 ;;
+    --all|--all-comments)
+      SHOW_MODE="all"; shift ;;
+    --include-outdated)
+      INCLUDE_OUTDATED=1; shift ;;
+    --debug)
+      DEBUG=1; shift ;;
+    --json)
+      OUTPUT_JSON=1; shift ;;
+    --list)
+      OUTPUT_LIST=1; shift ;;
+    --no-color)
+      NO_COLOR_FLAG=1; shift ;;
+    --resolved)
+      STATE_FILTER="resolved"; shift ;;
+    --sort)
+      [ -n "${2:-}" ] || { err "--sort requires one of: file|date|author"; exit 1; }
+      case "$2" in
+        file|date|author) SORT_MODE="$2" ;;
+        *) err "--sort must be file|date|author"; exit 1 ;;
+      esac
+      shift 2 ;;
+    -R|--repo)
+      [ -n "${2:-}" ] || { err "--repo requires <owner/repo>"; exit 1; }
+      REPO_ARG="$2"; shift 2 ;;
+    -v|--version)
+      print_version_and_exit ;;
+    -h|--help)
+      usage; exit 0 ;;
+    --)
+      shift; break ;;
+    -*)
+      err "Unknown option: $1"; err "Run with --help for usage."; exit 1 ;;
+    *)
+      PR_NUMBER="$1"; shift
+      ;;
+  esac
+done
+
+# Determine mode-specific dependencies now that flags are parsed
+UI_MODE=1; [ "${OUTPUT_JSON:-0}" -eq 1 ] && UI_MODE=0; [ "${OUTPUT_LIST:-0}" -eq 1 ] && UI_MODE=0
+API_MODE=1; [ -n "${GH_REVIEW_PR_JSON:-}" ] && API_MODE=0
+
+# Base requirements
+for bin in jq awk sed base64 wc tr nl cat cut rev perl; do
+  need "$bin" || { err "Please install '$bin' and try again."; exit 1; }
+done
+
+# Ensure jq >= 1.6 for fromdateiso8601
+jqv=$(jq --version 2>/dev/null | ${SED_BIN} -E 's/^jq-//')
+if printf '%s' "$jqv" | grep -Eq '^[0-9]+\.[0-9]+'; then
+  mj=${jqv%%.*}; mn=${jqv#*.}; mn=${mn%%.*}
+  if [ "$mj" -lt 1 ] || { [ "$mj" -eq 1 ] && [ "$mn" -lt 6 ]; }; then
+    err "jq >= 1.6 required; found $jqv. Please upgrade jq."
+    exit 1
+  fi
+fi
+
+# Interactive UI requirement
+if [ "$UI_MODE" -eq 1 ]; then
+  need fzf || { err "Please install 'fzf' and try again."; exit 1; }
+fi
+
+# Color handling
+COLOR=1
+if [ "$NO_COLOR_FLAG" -eq 1 ] || [ -n "${NO_COLOR:-}" ] || [ "${CLICOLOR:-1}" = "0" ] || [ "${TERM:-}" = "dumb" ]; then
+  COLOR=0
+fi
+
+# Infer owner/repo
+OWNER=""; REPO=""
+if [ -n "$REPO_ARG" ]; then
+  case "$REPO_ARG" in
+    */*) OWNER="${REPO_ARG%%/*}"; REPO="${REPO_ARG#*/}" ;;
+    *) err "--repo must be in the form owner/repo"; exit 1 ;;
+  esac
+else
+  if info="$(gh repo view --json owner,name --jq '.owner.login+" " + .name' 2>/dev/null)"; then
+    OWNER="${info%% *}"
+    REPO="${info##* }"
+  else
+    remote_url="$(git remote get-url origin 2>/dev/null || git remote get-url upstream 2>/dev/null || true)"
+    [ -n "${remote_url:-}" ] || { err "Cannot infer repository; ensure you're inside a GitHub repo or pass --repo."; exit 1; }
+    if printf "%s" "$remote_url" | grep -q '^git@github.com:'; then
+      path_part="${remote_url#*:}"; path_part="${path_part%.git}"
+    elif printf "%s" "$remote_url" | grep -q '^https://github.com/'; then
+      path_part="${remote_url#https://github.com/}"; path_part="${path_part%.git}"
+    else
+      err "Remote is not a GitHub URL: $remote_url"; exit 1
+    fi
+    OWNER="${path_part%%/*}"; REPO="${path_part#*/}"
+  fi
+fi
+
+# Infer PR number if not provided
+if [ -z "$PR_NUMBER" ]; then
+  if num="$(gh pr view --json number --jq .number 2>/dev/null)"; then
+    [ -n "$num" ] && [ "$num" != "null" ] && PR_NUMBER="$num"
+  fi
+fi
+if [ -z "$PR_NUMBER" ]; then
+  branch="$(git branch --show-current 2>/dev/null || true)"
+  if [ -n "${branch:-}" ]; then
+    num="$(gh pr list --state all --head "$branch" --json number --jq '.[0].number' 2>/dev/null || true)"
+    [ -n "$num" ] && [ "$num" != "null" ] && PR_NUMBER="$num"
+  fi
+fi
+[ -n "$PR_NUMBER" ] || { err "Could not determine PR number. Pass it as an argument or run on a PR branch."; exit 1; }
+
+# GraphQL query (review threads + comments)
+QUERY=$(cat <<'GQL'
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      reviewThreads(first: 100) {
+        nodes {
+          path
+          line
+          originalLine
+          isResolved
+          comments(first: 100) {
+            nodes {
+              author { login }
+              body
+              bodyText
+              url
+              path
+              diffHunk
+              createdAt
+            }
+          }
+        }
+      }
+    }
+  }
+}
+GQL
+)
+
+# Create temp workspace early and ensure cleanup
+TMPDIR="$(mktemp -d -t gh-pr-comments.XXXXXX)"
+cleanup() { command rm -rf "$TMPDIR" >/dev/null 2>&1 || true; }
+trap cleanup EXIT INT TERM
+
+# Fetch JSON with better error reporting, allowing override via env
+if [ -n "${GH_REVIEW_PR_JSON:-}" ]; then
+  if [ -f "$GH_REVIEW_PR_JSON" ]; then
+    JSON="$(cat "$GH_REVIEW_PR_JSON")"
+  else
+    JSON="$GH_REVIEW_PR_JSON"
+  fi
+else
+  GH_ERR_FILE="$(mktemp -t gh-pr-comments-gherr.XXXXXX)"
+  JSON="$(gh api graphql -f query="$QUERY" -f owner="$OWNER" -f name="$REPO" -F number="$PR_NUMBER" 2>"$GH_ERR_FILE")" || {
+    err "GitHub API failed:"
+    if [ -s "$GH_ERR_FILE" ]; then
+      # Show first few lines of the underlying error for context
+      head -n 10 "$GH_ERR_FILE" >&2
+    else
+      err "Are you authenticated? Try: gh auth status; gh auth login"
+    fi
+    rm -f "$GH_ERR_FILE" >/dev/null 2>&1 || true
+    exit 1
+  }
+  rm -f "$GH_ERR_FILE" >/dev/null 2>&1 || true
+fi
+
+# Validate/clean JSON
+printf '%s' "$JSON" | jq . >/dev/null 2>&1 || {
+  JSON="$(printf '%s' "$JSON" | perl -pe 's/[\x00-\x1F]//g')"
+  printf '%s' "$JSON" | jq . >/dev/null 2>&1 || { err "Invalid JSON from GitHub API"; exit 1; }
+}
+
+# Optional debug summary
+if [ "$DEBUG" -eq 1 ]; then
+  DBG_FILE="$TMPDIR/debug-threads.json"
+  printf '%s' "$JSON" | jq '{
+    total_threads: (.data.repository.pullRequest.reviewThreads.nodes | length),
+    unresolved_threads: (.data.repository.pullRequest.reviewThreads.nodes | map(select(.isResolved == false)) | length),
+    unresolved_current_threads: (.data.repository.pullRequest.reviewThreads.nodes | map(select(.isResolved == false)) | map(select(.line != null)) | length),
+    sample: (.data.repository.pullRequest.reviewThreads.nodes | map({path, line, originalLine, isResolved}) | .[0:10])
+  }' > "$DBG_FILE" 2>/dev/null || true
+  err "[debug] Wrote thread summary to: $DBG_FILE"
+fi
+
+# Persist JSON and initial state, then build list via subcommand
+printf '%s' "$JSON" > "$TMPDIR/data.json"
+TSV="$TMPDIR/comments.tsv"; LIST="$TMPDIR/list"
+{
+  printf 'AUTHORS=%s\n' "$AUTHORS"
+  printf 'FILES=%s\n' "$FILES"
+  printf 'SINCE=%s\n' "$SINCE"
+  printf 'UNTIL=%s\n' "$UNTIL"
+  printf 'SHOW_MODE=%s\n' "$SHOW_MODE"
+  printf 'INCLUDE_OUTDATED=%s\n' "$INCLUDE_OUTDATED"
+  printf 'STATE_FILTER=%s\n' "$STATE_FILTER"
+  printf 'SORT=%s\n' "$SORT_MODE"
+  printf 'COLOR=%s\n' "$COLOR"
+  printf 'SHOW_HELP=0\n'
+} > "$TMPDIR/state"
+
+$0 __build "$TMPDIR" >/dev/null 2>&1 || true
+
+if [ ! -s "$LIST" ]; then
+  err "No matching review comments found for ${OWNER}/${REPO} PR #${PR_NUMBER}."
+  err "Tip: try --all or --include-outdated to broaden results."
+  exit 0
+fi
+
+count="$("$WC_BIN" -l < "$LIST" | "$TR_BIN" -d ' ')"
+if [ "$COLOR" -eq 1 ]; then
+  ESC=$'\033'
+  header="${ESC}[33m${OWNER}/${REPO}${ESC}[0m | ${ESC}[95mPR #${PR_NUMBER}${ESC}[0m | ${ESC}[36m${count} comment(s)${ESC}[0m | ${ESC}[90mpress ? for help${ESC}[0m"
+else
+  header="${OWNER}/${REPO} | PR #${PR_NUMBER} | ${count} comment(s) | press ? for help"
+fi
+
+# If requested, emit JSON or list and exit early (useful for CI/tests)
+if [ "$OUTPUT_JSON" -eq 1 ]; then
+  # TSV columns: author, path, line, url, date, preview, diff_b64, body_b64
+  "$CAT_BIN" "$TSV" | jq -R -s '
+    split("\n")[:-1] | map(split("\t")) |
+    map({
+      author: .[0],
+      path: .[1],
+      line: (.[2] | tonumber? // null),
+      url: .[3],
+      date: .[4],
+      preview: .[5],
+      diff_b64: .[6],
+      body_b64: .[7]
+    })' || true
+  exit 0
+fi
+
+if [ "$OUTPUT_LIST" -eq 1 ]; then
+  "$CAT_BIN" "$LIST"
+  exit 0
+fi
+
+# Run fzf
+SCRIPT_PATH="$0"
+case "$SCRIPT_PATH" in
+  /*) ;;
+  *) SCRIPT_PATH="$(command -v -- "$0" 2>/dev/null || printf '%s' "$0")" ;;
+esac
+
+MSG_FILE="$TMPDIR/copied-msg"
+
+FZF_ANSI=""
+[ "$COLOR" -eq 1 ] && FZF_ANSI="--ansi"
+
+{ printf '\n'; "$NL_BIN" -ba -w2 "$LIST"; } | "$FZF_BIN" ${FZF_ANSI} \
+  --prompt='comments> ' \
+  --header="$header" \
+  --header-lines=1 \
+  --height=100% --border=rounded --layout=reverse \
+  --delimiter='\t' --with-nth=2 --nth=2,3 \
+  --preview-window='right:60%:wrap' \
+  --preview "'$SCRIPT_PATH' __preview {} $TMPDIR ${OWNER}/${REPO} ${PR_NUMBER}" \
+  --bind "enter:execute-silent('$SCRIPT_PATH' __copy {} $TMPDIR full $MSG_FILE)+refresh-preview" \
+  --bind "ctrl-y:execute-silent('$SCRIPT_PATH' __copy {} $TMPDIR full)+refresh-preview" \
+  --bind "ctrl-m:execute-silent('$SCRIPT_PATH' __copy {} $TMPDIR md $MSG_FILE)+refresh-preview" \
+  --bind "ctrl-u:execute-silent('$SCRIPT_PATH' __copy {} $TMPDIR url $MSG_FILE)+refresh-preview" \
+  --bind "ctrl-b:execute-silent('$SCRIPT_PATH' __copy {} $TMPDIR body $MSG_FILE)+refresh-preview" \
+  --bind "ctrl-o:execute-silent('$SCRIPT_PATH' __open {} $TMPDIR)" \
+  --bind "ctrl-e:execute-silent('$SCRIPT_PATH' __edit {} $TMPDIR)" \
+  --bind "alt-a:execute-silent('$SCRIPT_PATH' __toggle $TMPDIR show)+reload('$NL_BIN -ba -w2 \"$LIST\"')+refresh-preview" \
+  --bind "alt-o:execute-silent('$SCRIPT_PATH' __toggle $TMPDIR outdated)+reload('$NL_BIN -ba -w2 \"$LIST\"')+refresh-preview" \
+  --bind "alt-r:execute-silent('$SCRIPT_PATH' __toggle $TMPDIR state)+reload('$NL_BIN -ba -w2 \"$LIST\"')+refresh-preview" \
+  --bind "alt-s:execute-silent('$SCRIPT_PATH' __toggle $TMPDIR sort)+reload('$NL_BIN -ba -w2 \"$LIST\"')+refresh-preview" \
+  --bind "?:execute-silent('$SCRIPT_PATH' __toggle $TMPDIR help)+refresh-preview"
+
+
+exit 0
