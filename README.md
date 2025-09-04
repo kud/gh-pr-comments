@@ -77,6 +77,7 @@ Enable fzf key bindings (history search, Alt-C, etc.):
 ```
 $(brew --prefix)/opt/fzf/install
 ```
+
 Choose to enable key bindings and shell completion when prompted.
 
 - Ubuntu/Debian:
@@ -153,23 +154,24 @@ Color:
 
 ## 🏷️ Versioning & Releases
 
-This repo uses a simple SemVer approach with a plain `VERSION` file:
+This project follows Semantic Versioning (SemVer). Release workflow:
 
-1. Bump version in `VERSION` (first line only).
-2. Update `CHANGELOG.md`.
+1. Determine the next version (e.g. `v0.1.1`) based on the changes (fix = patch, new backward‑compatible feature = minor, breaking change = major).
+2. Update `CHANGELOG.md` with a new section for the version (include date):
+
+```
+## v0.1.1 - 2025-09-04
+- Add ...
+- Fix ...
+```
+
 3. Commit and tag:
 
 ```
-git add -A
+git add CHANGELOG.md
 git commit -m "chore(release): v0.1.1"
 git tag v0.1.1
 git push && git push --tags
-```
-
-Quick one-liner to tag using the `VERSION` file:
-
-```
-version=$(cat VERSION) && git tag "v$version" && git push origin "v$version"
 ```
 
 Users can check the installed version with:
@@ -177,7 +179,6 @@ Users can check the installed version with:
 ```
 gh pr-comments --version
 ```
-
 
 ## 🛠️ Troubleshooting
 
