@@ -46,16 +46,12 @@ Options:
 
 Keybindings inside fzf:
 
-- Enter / Ctrl-Y: Copy comment details
-- Ctrl-M: Copy Markdown block (with diff context)
-- Ctrl-U: Copy URL only
-- Ctrl-B: Copy body only
-- Ctrl-O: Open selected comment in browser
-- Ctrl-E: Open file:line in $EDITOR or VS Code
-- Alt-A: Toggle latest/all comments per thread
-- Alt-O: Toggle including outdated threads
-- Alt-R: Cycle thread state (unresolved → resolved → all)
-- Alt-S: Cycle sort (file → date → author)
+- **Copy**: Enter / Ctrl-Y (full) • Ctrl-M (Markdown) • Ctrl-U (URL) • Ctrl-B (body)
+- **Open**: Ctrl-O (browser) • Ctrl-E (editor at file:line)
+- **Refresh**: Ctrl-R (fetch latest comments from GitHub)
+- **Toggles**: Alt-A (latest/all) • Alt-O (outdated) • Alt-R (state) • Alt-S (sort)
+- **Help**: ? (toggle help overlay)
+- **Filter**: Just start typing to filter by filename or author in real-time
 
 ## 🧰 Requirements
 
@@ -129,10 +125,30 @@ GH_REVIEW_PR_JSON=/path/to/your_graphql.json \
 
 The above prints the parsed comments as JSON (use `--list` to print the UI list instead).
 
+## 🎯 Workflow
+
+**Pre-filter on launch** (command-line options):
+- `-f src/app.py` — Filter by file path/regex (repeatable)
+- `-a @alice` — Filter by author (repeatable)
+- `--since 2024-01-01`, `--until 2024-01-31` — Filter by date range
+- `--resolved` — Show resolved threads instead of unresolved
+- Combine: `-f src -a @alice --since 2024-01-01`
+
+**Filter in real-time** (inside fzf):
+- Start typing to search by filename, author, or date
+- Press **Ctrl-R** to refresh and fetch latest comments from GitHub
+- Use **Alt-A** / **Alt-O** / **Alt-R** / **Alt-S** to toggle views
+
+**Copy & Open**:
+- **Enter** or **Ctrl-Y**: Copy full comment with context
+- **Ctrl-M**: Copy as Markdown (great for responses)
+- **Ctrl-O**: Open in browser
+- **Ctrl-E**: Jump to file:line in your editor
+
 ## 🔎 Filtering tips
 
 - File-first list: the UI list now starts with the file path for quick scanning.
-- Filter by file: `-f src/app.py` can be repeated. Values are treated as regex by jq’s `test(...)`, so you can use patterns like `-f '^src/.*\.py$'`.
+- Filter by file: `-f src/app.py` can be repeated. Values are treated as regex by jq's `test(...)`, so you can use patterns like `-f '^src/.*\.py$'`.
 - Filter by date: `--since 2024-01-01`, `--until 2024-01-31` (inclusive, UTC based on `createdAt`).
 - Combine filters: `-f src -a @alice --since 2024-01-01 --include-outdated`.
 
@@ -182,12 +198,17 @@ gh pr-comments --version
 
 ## 🛠️ Troubleshooting
 
-- GitHub auth error: If the API call fails, run `gh auth status` and `gh auth login`.
-- No comments found: Try `--all`, `--include-outdated`, or `--resolved`. Also check filters like `--author`, `--file`, `--since/--until`.
-- Clipboard not working: Install `pbcopy` (macOS), `xclip`/`xsel` (Linux). On WSL, add `pbcopy() { clip.exe; }` to your shell or install `win32yank`.
-- Colors look noisy: Use `--no-color` or set `NO_COLOR=1`. Piping output? Prefer `--no-color`.
-- fzf not launching: Ensure `fzf` is installed and your `TERM` is not `dumb` (use a real terminal). On macOS, run `$(brew --prefix)/opt/fzf/install` to enable key bindings.
-- jq version: Requires jq >= 1.6 (for `fromdateiso8601`). Check with `jq --version` and upgrade if needed.
-- Markdown rendering: If `glow`/`mdcat` are missing, plain text is shown. Install one for nicer previews.
-- Open in editor (Ctrl-E) does nothing: Set the `EDITOR` env var, or ensure `code` is available for VS Code. Falls back to `vim`.
-- Large PRs: Extremely long diff hunks are collapsed for performance in previews. Currently up to 100 comments per thread are fetched.
+- **GitHub auth error**: If the API call fails, run `gh auth status` and `gh auth login`.
+- **No comments found**: Try `--all`, `--include-outdated`, or `--resolved`. Also check filters like `--author`, `--file`, `--since/--until`.
+- **Refresh (Ctrl-R) fails**: Check the error message in the preview pane. Common causes:
+  - Not authenticated: run `gh auth status` and `gh auth login`
+  - Network issues: ensure GitHub is reachable
+  - If refresh shows an error, your old list is preserved automatically
+- **Search/filter not working**: Just start typing in fzf - it searches across filenames, authors, and dates
+- **Clipboard not working**: Install `pbcopy` (macOS), `xclip`/`xsel` (Linux). On WSL, add `pbcopy() { clip.exe; }` to your shell or install `win32yank`.
+- **Colors look noisy**: Use `--no-color` or set `NO_COLOR=1`. Piping output? Prefer `--no-color`.
+- **fzf not launching**: Ensure `fzf` is installed and your `TERM` is not `dumb` (use a real terminal). On macOS, run `$(brew --prefix)/opt/fzf/install` to enable key bindings.
+- **jq version**: Requires jq >= 1.6 (for `fromdateiso8601`). Check with `jq --version` and upgrade if needed.
+- **Markdown rendering**: If `glow`/`mdcat` are missing, plain text is shown. Install one for nicer previews.
+- **Open in editor (Ctrl-E) does nothing**: Set the `EDITOR` env var, or ensure `code` is available for VS Code. Falls back to `vim`.
+- **Large PRs**: Extremely long diff hunks are collapsed for performance in previews. Currently up to 100 comments per thread are fetched.
