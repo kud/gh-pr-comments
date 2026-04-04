@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+## [0.5.0] - 2026-04-04
+
+### Added
+
+- Ctrl-R: reply to a comment in your `$EDITOR`
+- Ctrl-]: resolve a review thread via GraphQL mutation
+- Ctrl-\: unresolve a review thread via GraphQL mutation
+- `mise.toml` with `link`/`unlink`/`lint`/`fake-data`/`test-offline`/`create-test-pr`/`release` tasks
+- `scripts/fake-data.sh`: generates `test/fixtures/graphql-response.json` for offline testing
+- `scripts/create-test-pr.sh`: creates a real throwaway GitHub PR with review comments
+- `scripts/release.sh`: stamps CHANGELOG, commits, and tags a release
+
+### Fixed
+
+- Alt-A/O/R/S toggles no longer silently fail to reload the list after rebuilding (incorrect `reload()` quoting in fzf bind)
+- `bash "$0"` internal re-invocations replaced with `"$0"` to honour the `#!/bin/zsh` shebang consistently
+- `sub_build` now redirects `jq < file` instead of buffering via `$(cat file)` subshell
+- Path truncation in list view reduced from 5 subprocess forks to a single `awk` call per row
+- Removed unreachable `get_version_from_version_file` (VERSION file was removed in v0.4.x)
+
 ## [0.4.0] - 2025-09-02
 
 ### Breaking

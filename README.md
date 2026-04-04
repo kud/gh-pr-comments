@@ -48,7 +48,7 @@ Keybindings inside fzf:
 
 - **Copy**: Enter / Ctrl-Y (full) • Ctrl-M (Markdown) • Ctrl-U (URL) • Ctrl-B (body)
 - **Open**: Ctrl-O (browser) • Ctrl-E (editor at file:line)
-- **Refresh**: Ctrl-R (fetch latest comments from GitHub)
+- **Interact**: Ctrl-R (reply) • Ctrl-] (resolve) • Ctrl-\ (unresolve)
 - **Toggles**: Alt-A (latest/all) • Alt-O (outdated) • Alt-R (state) • Alt-S (sort)
 - **Help**: ? (toggle help overlay)
 - **Filter**: Just start typing to filter by filename or author in real-time
@@ -128,6 +128,7 @@ The above prints the parsed comments as JSON (use `--list` to print the UI list 
 ## 🎯 Workflow
 
 **Pre-filter on launch** (command-line options):
+
 - `-f src/app.py` — Filter by file path/regex (repeatable)
 - `-a @alice` — Filter by author (repeatable)
 - `--since 2024-01-01`, `--until 2024-01-31` — Filter by date range
@@ -135,11 +136,13 @@ The above prints the parsed comments as JSON (use `--list` to print the UI list 
 - Combine: `-f src -a @alice --since 2024-01-01`
 
 **Filter in real-time** (inside fzf):
+
 - Start typing to search by filename, author, or date
 - Press **Ctrl-R** to refresh and fetch latest comments from GitHub
 - Use **Alt-A** / **Alt-O** / **Alt-R** / **Alt-S** to toggle views
 
 **Copy & Open**:
+
 - **Enter** or **Ctrl-Y**: Copy full comment with context
 - **Ctrl-M**: Copy as Markdown (great for responses)
 - **Ctrl-O**: Open in browser

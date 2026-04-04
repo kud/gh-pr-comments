@@ -1,0 +1,29 @@
+[tools]
+
+[tasks.link]
+description = "Install extension from local checkout (dev mode)"
+run = "gh extension remove pr-comments 2>/dev/null || true && gh extension install ."
+
+[tasks.unlink]
+description = "Reinstall extension from GitHub (exit dev mode)"
+run = "gh extension remove pr-comments 2>/dev/null || true && gh extension install kud/gh-pr-comments"
+
+[tasks.lint]
+description = "Run shellcheck on the main script"
+run = "shellcheck -s bash gh-pr-comments"
+
+[tasks.fake-data]
+description = "Generate offline test fixture (test/fixtures/graphql-response.json)"
+run = "scripts/fake-data.sh"
+
+[tasks.test-offline]
+description = "Browse fake PR data without hitting GitHub"
+run = "GH_REVIEW_PR_JSON=test/fixtures/graphql-response.json ./gh-pr-comments 42 -R acme/demo-app"
+
+[tasks.create-test-pr]
+description = "Create a throwaway PR with review comments in kud/gh-pr-comments-tests"
+run = "scripts/create-test-pr.sh"
+
+[tasks.release]
+description = "Tag and push a new release (usage: mise run release -- v0.6.0)"
+run = "scripts/release.sh"
