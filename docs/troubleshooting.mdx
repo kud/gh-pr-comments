@@ -1,0 +1,31 @@
+---
+title: Troubleshooting
+description: Fixes for common auth, clipboard, rendering, and fzf issues.
+---
+
+- **GitHub auth error**: If the API call fails, run `gh auth status` and
+  `gh auth login`.
+- **No comments found**: Try `--all`, `--include-outdated`, or `--resolved`.
+  Also check filters like `--author`, `--file`, `--since`/`--until`.
+- **Refresh (Ctrl-R) fails**: Check the error message in the preview pane.
+  Common causes:
+  - Not authenticated: run `gh auth status` and `gh auth login`
+  - Network issues: ensure GitHub is reachable
+  - If refresh shows an error, your old list is preserved automatically
+- **Search/filter not working**: Just start typing in fzf — it searches across
+  filenames, authors, and dates.
+- **Clipboard not working**: Install `pbcopy` (macOS), `xclip`/`xsel` (Linux).
+  On WSL, add `pbcopy() { clip.exe; }` to your shell or install `win32yank`.
+- **Colors look noisy**: Use `--no-color` or set `NO_COLOR=1`. Piping output?
+  Prefer `--no-color`.
+- **fzf not launching**: Ensure `fzf` is installed and your `TERM` is not
+  `dumb` (use a real terminal). On macOS, run
+  `$(brew --prefix)/opt/fzf/install` to enable key bindings.
+- **jq version**: Requires jq >= 1.6 (for `fromdateiso8601`). Check with
+  `jq --version` and upgrade if needed.
+- **Markdown rendering**: If `glow`/`mdcat` are missing, plain text is shown.
+  Install one for nicer previews.
+- **Open in editor (Ctrl-E) does nothing**: Set the `EDITOR` env var, or ensure
+  `code` is available for VS Code. Falls back to `vim`.
+- **Large PRs**: Extremely long diff hunks are collapsed for performance in
+  previews. Currently up to 100 comments per thread are fetched.

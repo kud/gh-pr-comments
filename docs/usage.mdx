@@ -1,0 +1,78 @@
+---
+title: Usage
+description: Launch the picker, pass options, and drive the fzf UI with keybindings.
+---
+
+```sh
+gh pr-comments                 # infer repo and current PR
+gh pr-comments <number>        # browse a specific PR number
+gh pr-comments -R owner/repo   # target a specific repository
+```
+
+## Options
+
+| Option                        | Description                                    |
+| ----------------------------- | ---------------------------------------------- |
+| `-a`, `--author`              | Filter by author (can be repeated)             |
+| `-f`, `--file <path/regex>`   | Filter by file path (repeatable)               |
+| `--since <YYYY-MM-DD>`        | Filter comments created on/after date          |
+| `--until <YYYY-MM-DD>`        | Filter comments created on/before date         |
+| `--all`, `--all-comments`     | Show all comments in threads (not just latest) |
+| `--include-outdated`          | Include outdated comment threads               |
+| `--json`                      | Print parsed comments as JSON and exit         |
+| `--list`                      | Print UI list output and exit                  |
+| `--resolved`                  | Show resolved threads instead of unresolved    |
+| `--sort <file\|date\|author>` | Sorting mode (default: `file`)                 |
+| `--no-color`                  | Disable ANSI colors in UI/preview              |
+| `--debug`                     | Write a small debug summary file               |
+| `-R`, `--repo <owner/repo>`   | Target a specific repository                   |
+| `-h`, `--help`                | Show help                                      |
+| `-v`, `--version`             | Show version                                   |
+
+## Keybindings
+
+Inside the fzf picker:
+
+- **Copy**: Enter / Ctrl-Y (full) • Ctrl-M (Markdown) • Ctrl-U (URL) • Ctrl-B (body)
+- **Open**: Ctrl-O (browser) • Ctrl-E (editor at file:line)
+- **Interact**: Ctrl-R (reply) • Ctrl-] (resolve) • Ctrl-\ (unresolve)
+- **Toggles**: Alt-A (latest/all) • Alt-O (outdated) • Alt-R (state) • Alt-S (sort)
+- **Help**: `?` (toggle help overlay)
+- **Filter**: just start typing to filter by filename or author in real-time
+
+## Workflow
+
+**Pre-filter on launch** (command-line options):
+
+- `-f src/app.py` — Filter by file path/regex (repeatable)
+- `-a @alice` — Filter by author (repeatable)
+- `--since 2024-01-01`, `--until 2024-01-31` — Filter by date range
+- `--resolved` — Show resolved threads instead of unresolved
+- Combine: `-f src -a @alice --since 2024-01-01`
+
+**Filter in real-time** (inside fzf):
+
+- Start typing to search by filename, author, or date
+- Press **Ctrl-R** to refresh and fetch the latest comments from GitHub
+- Use **Alt-A** / **Alt-O** / **Alt-R** / **Alt-S** to toggle views
+
+**Copy & open**:
+
+- **Enter** or **Ctrl-Y**: Copy the full comment with context
+- **Ctrl-M**: Copy as Markdown (great for responses)
+- **Ctrl-O**: Open in the browser
+- **Ctrl-E**: Jump to `file:line` in your editor
+
+## Notes
+
+- By default, only the latest non-outdated comment of each unresolved thread is
+  shown. Use `--all` to see every comment, and `--include-outdated` to include
+  outdated threads.
+- `--author` accepts either `user` or `@user`. `copilot` is normalized to
+  `copilot-pull-request-reviewer`.
+- If no unresolved comments are found, try `--all` or `--include-outdated`.
+- On Linux, ensure `$HOME/.local/bin` is in your `PATH` so `fzf`/`jq` can be
+  found.
+
+See [Filtering](/projects/gh-pr-comments/docs/filtering) for more on narrowing
+down threads.

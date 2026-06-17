@@ -1,0 +1,116 @@
+---
+title: Introduction
+description: Browse and triage unresolved GitHub PR review threads from your terminal with fzf.
+---
+
+**gh-pr-comments** is a GitHub CLI extension that lets you browse, filter, and
+triage unresolved review threads for a pull request — all from your terminal.
+
+Pick a thread in an `fzf` picker, preview the comment with its code context,
+then copy it to your clipboard, open it in the browser, jump to the file in your
+editor, or reply and resolve it inline. No more clicking through the GitHub web
+UI to chase down review feedback.
+
+## Features
+
+- **fzf-powered picker** — fuzzy-search unresolved threads by file, author, or
+  date, with a live preview of the comment and its diff hunk.
+- **Rich previews** — code context with optional Markdown rendering via `glow`
+  or `mdcat`.
+- **Copy modes** — full comment, Markdown, URL, or body only, straight to your
+  clipboard.
+- **Open anywhere** — jump to the comment in your browser or to `file:line` in
+  your editor.
+- **Interact inline** — reply, resolve, and unresolve threads without leaving
+  the terminal.
+- **Pre-filter on launch** — by file path/regex, author, or date range, then
+  refine further inside fzf.
+
+## Install
+
+From a local checkout of this repo:
+
+```sh
+gh extension install .
+```
+
+Or directly from GitHub:
+
+```sh
+gh extension install kud/gh-pr-comments
+```
+
+Check the installed version:
+
+```sh
+gh pr-comments --version
+```
+
+## Requirements
+
+Core tools:
+
+- `gh`, `jq` (>= 1.6), `fzf`
+- `awk`, `sed`, `base64`, `wc`, `tr`, `nl`, `cat`, `cut`, `rev`, `perl`
+
+Optional:
+
+- `glow` or `mdcat` for nicer Markdown rendering
+- Clipboard: `pbcopy` (macOS) or `xclip`/`xsel` (Linux) for the copy action
+
+### Install requirements quickly
+
+**macOS (Homebrew):**
+
+```sh
+brew install gh jq fzf glow mdcat
+```
+
+Enable fzf key bindings (history search, Alt-C, etc.):
+
+```sh
+$(brew --prefix)/opt/fzf/install
+```
+
+Choose to enable key bindings and shell completion when prompted.
+
+**Ubuntu/Debian:**
+
+```sh
+sudo apt update
+sudo apt install -y gh jq fzf xclip
+# optional renderers: sudo apt install -y glow mdcat
+```
+
+**Fedora:**
+
+```sh
+sudo dnf install -y gh jq fzf xclip
+```
+
+**Arch Linux:**
+
+```sh
+sudo pacman -S --needed github-cli jq fzf xclip
+```
+
+### Notes
+
+- On Linux, ensure `$HOME/.local/bin` is in your `PATH` so tools are
+  discoverable.
+- If your distro doesn't package `gh`, install it via GitHub's
+  [instructions](https://github.com/cli/cli#installation).
+
+### WSL clipboard tips
+
+This tool supports `pbcopy`, `xclip`, or `xsel` for copying. On WSL without
+X11, a quick shim is to add this to `~/.zshrc`:
+
+```zsh
+pbcopy() { clip.exe; }
+```
+
+Alternatively, install `xclip` and run an X server, or install `win32yank` and
+symlink it to `pbcopy`.
+
+Head to [Usage](/projects/gh-pr-comments/docs/usage) to start browsing.

@@ -1,0 +1,55 @@
+---
+title: Development
+description: Test locally with injected GraphQL fixtures, plus the release workflow.
+---
+
+## Testing locally
+
+You can bypass live GitHub calls by providing a GraphQL result via the
+`GH_REVIEW_PR_JSON` env variable. This can be either a path to a file or the
+JSON string itself.
+
+Example with your own GraphQL response file:
+
+```sh
+GH_REVIEW_PR_JSON=/path/to/your_graphql.json \
+  ./gh-pr-comments 123 -R owner/repo --json
+```
+
+The above prints the parsed comments as JSON. Use `--list` to print the UI list
+instead:
+
+```sh
+GH_REVIEW_PR_JSON=/path/to/your_graphql.json \
+  ./gh-pr-comments 123 -R owner/repo --list
+```
+
+## Versioning & releases
+
+This project follows [Semantic Versioning](https://semver.org/). Release
+workflow:
+
+1. Determine the next version (e.g. `v0.1.1`) based on the changes: fix = patch,
+   new backward-compatible feature = minor, breaking change = major.
+2. Update `CHANGELOG.md` with a new section for the version (include the date):
+
+   ```
+   ## v0.1.1 - 2025-09-04
+   - Add ...
+   - Fix ...
+   ```
+
+3. Commit and tag:
+
+   ```sh
+   git add CHANGELOG.md
+   git commit -m "chore(release): v0.1.1"
+   git tag v0.1.1
+   git push && git push --tags
+   ```
+
+Users can check the installed version with:
+
+```sh
+gh pr-comments --version
+```
