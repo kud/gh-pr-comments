@@ -1,12 +1,12 @@
 ---
-title: Filtering
+title: 🔍 Filtering
 description: Narrow review threads by file, author, date, state, and sort order.
 ---
 
 You can pre-filter threads when launching the tool, then refine further inside
 the fzf picker.
 
-## By file
+## 📄 By file
 
 The UI list starts with the file path for quick scanning. Filter by file with
 `-f`, which can be repeated:
@@ -21,7 +21,7 @@ Values are treated as regex by jq's `test(...)`, so you can use patterns:
 gh pr-comments -f '^src/.*\.py$'
 ```
 
-## By author
+## 👤 By author
 
 ```sh
 gh pr-comments -a @alice
@@ -30,7 +30,7 @@ gh pr-comments -a @alice
 `--author` accepts either `user` or `@user`, and can be repeated. `copilot` is
 normalized to `copilot-pull-request-reviewer`.
 
-## By date
+## 📅 By date
 
 Filter by an inclusive, UTC-based range on each thread's `createdAt`:
 
@@ -38,7 +38,7 @@ Filter by an inclusive, UTC-based range on each thread's `createdAt`:
 gh pr-comments --since 2024-01-01 --until 2024-01-31
 ```
 
-## Combine filters
+## 🧩 Combine filters
 
 Filters stack together:
 
@@ -46,14 +46,14 @@ Filters stack together:
 gh pr-comments -f src -a @alice --since 2024-01-01 --include-outdated
 ```
 
-## Sorting and state
+## 🔀 Sorting and state
 
 - Sort: `--sort date` sorts by newest first; `--sort author` groups by author.
   The default is `file`.
 - Resolved: `--resolved` browses resolved threads as a follow-up queue instead
   of unresolved ones.
 
-## Color
+## 🎨 Color
 
 Disable colors with `--no-color`, or set `NO_COLOR=1`. Piping output? Prefer
 `--no-color`.
